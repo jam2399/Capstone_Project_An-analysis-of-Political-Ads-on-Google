@@ -1,0 +1,250 @@
+---
+title: "capstone_analysis"
+output: html_document
+---
+1. Load Data
+```{r}
+imagead <- read.csv("image_final.csv", header = T, stringsAsFactors = F)
+adsum <- read.csv('google-political-ads-campaign-targeting.csv')
+imagead <- imagead[,-1]
+imagead <- imagead[!is.na(imagead$Impressions),]
+#orders
+imagead$Impressions <- factor(imagead$Impressions, levels = c("≤ 10k", "10k-100k", "100k-1M", "1M-10M"))
+imagead$Spend_USD <- factor(imagead$Spend_USD, levels = c("≤ 100", "100-1k", "1k-50k", "50k-100k", "> 100k"))
+imagead$cpm <- factor(as.numeric(imagead$Spend_USD) / as.numeric(imagead$Impressions))
+#date time
+imagead$Date_Range_Start <- as.Date(imagead$Date_Range_Start)
+imagead$Date_Range_End <- as.Date(imagead$Date_Range_End)
+imagead$t <- imagead$Date_Range_End - imagead$Date_Range_Start
+
+#Get the list of advertisers:
+advertisers <- unique(c(unique(imagead$Advertiser_Name), unique(textdb$Advertiser_Name)))
+#write.csv(advertisers, "advertisers.csv")
+```
+
+2. 
+```{r}
+library(quanteda)
+label_c <- corpus(imagead[,"Labels"])
+label_dfm <- dfm(label_c, remove_punct = TRUE, 
+                 remove = c("font", "text", "photo", "caption", "brand", "banner", "logo", "advertising",
+                            "photography", "poster", "graphics", "signage", "news", "forehead", "chin",
+                            "head", "nose", "hair", "jaw", "mouth", "cheek", "skin"))
+topfeatures(label_dfm, 50)
+textplot_wordcloud(label_dfm, min_size = 0.4, max_size = 4)
+
+#keyness
+docvars(label_c, "impressions") <- imagead$Impressions
+docvars(label_c, "cpm") <- imagead$cpm
+head(textstat_keyness(label_dfm, as.numeric(docvars(label_c, "cpm")) >= 5), 20)
+head(textstat_keyness(label_dfm, docvars(label_c, "impressions") == "100k-1M"), 20)
+head(textstat_keyness(label_dfm, docvars(label_c, "impressions") == "1M-10M"), 20)
+
+###
+imagead[,"Text"] <- gsub("\\\\n"," ", imagead[,"Text"])
+typeof(imagead$Text)
+
+text_c <- corpus(imagead[,"Text"])
+docvars(label_c, "cpm") <- imagead$cpm
+text_dfm <- dfm(text_c, remove_punct = TRUE, tolower = TRUE, remove = c(stopwords("en"), "paid"))
+topfeatures(text_dfm, 30)
+textplot_wordcloud(text_dfm, min_size = 0.4, max_size = 4)
+kwic(text_c, pattern = "authorized", window =10, valuetype = "regex")
+head(textstat_keyness(text_dfm, as.numeric(docvars(label_c, "cpm")) <= 2), 20)
+head(textstat_keyness(text_dfm, as.numeric(docvars(label_c, "cpm")) >= 5), 20)
+# Anthorized is a very frequent word (8010), most cases are negative ads by pac/commitee "not authorized by any candidate"
+imagead$Text <- tolower(imagead$Text)
+imagead$third_party <- rep(0, nrow(imagead))
+imagead$third_party[grep(pattern = "authorized",imagead$Text)] <- 1 
+mean(imagead$sent_score2[imagead$third_party == 1])
+mean(imagead$sent_score2[imagead$third_party == 0])
+```
+2.1 topics?
+```{r}
+library(topicmodels)
+# try all optinal choices
+text_dtm = convert(text_dfm, to = "topicmodels") 
+set.seed(123)
+train = sample(nrow(text_dtm), round(nrow(text_dtm) * .75))
+
+test = 1:nrow(text_dtm)
+dtm_train = text_dtm[train, ]
+dtm_test = text_dtm[!test %in% train, ]
+n_topics <- c(5, 10, 15, 20, 30, 40, 50, 100)
+final <- c()
+for (i in n_topics){
+  lda <- LDA(dtm_train, k = i, method = "Gibbs",control = list(verbose=FALSE, seed = 123, burnin = 100, iter = 500))
+  final <-c(final, perplexity(lda, newdata = dtm_test))
+}
+plot(n_topics,final,'l', main = "Cross Validated Result", xlab = "Number of Topics", ylab = "Model Perplexity")
+##
+text_dfm <- dfm_trim(text_dfm, min_docfreq = 2)
+rowTotals <- apply(text_dtm , 1, sum) #Find the sum of words in each Document
+text_dtm  <- text_dtm[rowTotals> 0, ]
+K <- 30 #I choose K = 20 as I think this K=20 is the most valid after testing other numbers
+lda <- LDA(text_dtm, k = K, method = "Gibbs", 
+           control = list(verbose=25L, seed = 123, burnin = 100, iter = 500))
+terms <- get_terms(lda, 15)
+topics <- get_topics(lda, 1)
+terms[,25]#diehl geoff
+terms[,15]#Attack Harris mark, Marquez Peterson for cut health care
+terms[,29]
+```
+
+
+
+3.sentiment
+```{r}
+library(MASS)
+library(stargazer)
+#Data Cleaning
+
+#orders
+imagead$Anger <- factor(imagead$Anger, levels = c("VERY_UNLIKELY", "UNLIKELY", "POSSIBLE", "LIKELY", "VERY_LIKELY"))
+imagead$Sorrow <- factor(imagead$Sorrow, levels = c("VERY_UNLIKELY", "UNLIKELY", "POSSIBLE", "LIKELY", "VERY_LIKELY"))
+imagead$Joy <- factor(imagead$Joy, levels = c("VERY_UNLIKELY", "UNLIKELY", "POSSIBLE", "LIKELY", "VERY_LIKELY"))
+imagead$Surprise <- factor(imagead$Surprise, levels = c("VERY_UNLIKELY", "UNLIKELY", "POSSIBLE", "LIKELY", "VERY_LIKELY"))
+#
+imagead[, "Anger"][which(imagead[, "Anger"] == "VERY_UNLIKELY")] <- 0
+imagead[, "Sorrow"][which(imagead[, "Sorrow"] == "VERY_UNLIKELY")] <- 0
+imagead[, "Joy"][which(imagead[, "Joy"] == "VERY_UNLIKELY")] <- 0
+imagead[, "Surprise"][which(imagead[, "Surprise"] == "VERY_UNLIKELY")] <- 0
+#unlikely:
+imagead[, "Anger"][which(imagead[, "Anger"] == "UNLIKELY")] <- 1
+imagead[, "Sorrow"][which(imagead[, "Sorrow"] == "UNLIKELY")] <- 1
+imagead[, "Joy"][which(imagead[, "Joy"] == "UNLIKELY")] <- 1
+imagead[, "Surprise"][which(imagead[, "Surprise"] == "UNLIKELY")] <- 1
+#possible:
+imagead[, "Anger"][which(imagead[, "Anger"] == "POSSIBLE")] <- 2
+imagead[, "Sorrow"][which(imagead[, "Sorrow"] == "POSSIBLE")] <- 2
+imagead[, "Joy"][which(imagead[, "Joy"] == "POSSIBLE")] <- 2
+imagead[, "Surprise"][which(imagead[, "Surprise"] == "POSSIBLE")] <- 2
+#likely:
+imagead[, "Anger"][which(imagead[, "Anger"] == "LIKELY")] <- 3
+imagead[, "Sorrow"][which(imagead[, "Sorrow"] == "LIKELY")] <- 3
+imagead[, "Joy"][which(imagead[, "Joy"] == "LIKELY")] <- 3
+imagead[, "Surprise"][which(imagead[, "Surprise"] == "LIKELY")] <- 3
+#VERY_LIKELY:
+imagead[, "Anger"][which(imagead[, "Anger"] == "VERY_LIKELY")] <- 4
+imagead[, "Sorrow"][which(imagead[, "Sorrow"] == "VERY_LIKELY")] <- 4
+imagead[, "Joy"][which(imagead[, "Joy"] == "VERY_LIKELY")] <- 4
+imagead[, "Surprise"][which(imagead[, "Surprise"] == "VERY_LIKELY")] <- 4
+
+#Calculate sentiment score
+imagead$sent_score <- as.vector(as.numeric(imagead[,"Joy"]) + as.numeric(imagead[,"Surprise"])
+                                - as.numeric(imagead[,"Anger"]) - as.numeric(imagead[,"Sorrow"]))
+
+#Regression:
+#stargazer(polr(textdb$Impressions ~ textdb$sent_score, Hess=TRUE),  title = "Ordinal Logistic Regression Result")
+stargazer(polr(imagead$Impressions ~ imagead$sent_score, Hess=TRUE), type = "html", 
+          title = "Ordinal Logistic Regression Result")
+
+#cpm, factor?
+polr(imagead$cpm ~ imagead$sent_score2 + imagead$third_party + imagead$t, Hess=TRUE)
+#which emotions?
+stargazer(polr(imagead$cpm ~ imagead$sent_score2 + imagead$third_party + imagead$t
+               +imagead$Anger + imagead$Sorrow + imagead$Joy + imagead$Surprise, Hess=TRUE), 
+          type = "html",  title = "Ordinal Logistic Regression Result (Image Ads)")
+# cpm, continuous?
+stargazer(polr(imagead$cpm ~ imagead$third_party + imagead$t
+               +as.numeric(imagead$Anger) + as.numeric(imagead$Sorrow) 
+               + as.numeric(imagead$Joy) + as.numeric(imagead$Surprise), Hess=TRUE), 
+          type = "html",  title = "Ordinal Logistic Regression Result (Image Ads)")
+#
+stargazer(polr(imagead$cpm ~ imagead$sent_score + imagead$third_party + imagead$t, Hess=TRUE),
+          polr(imagead$cpm ~ imagead$sent_score2 + imagead$third_party + imagead$t, Hess=TRUE),
+          polr(imagead$cpm ~ imagead$third_party + imagead$t
+               +as.numeric(imagead$Anger) + as.numeric(imagead$Sorrow) 
+               + as.numeric(imagead$Joy) + as.numeric(imagead$Surprise), Hess=TRUE),
+          polr(imagead$cpm ~ imagead$third_party + imagead$t
+               +imagead$Anger + imagead$Sorrow + imagead$Joy + imagead$Surprise, Hess=TRUE), 
+          type = "latex",  title = "Ordinal Logistic Regression Result (Image Ads)")
+?stargazer
+```
+
+total together?
+```{r}
+#total together?
+typeof(textdb$Date_Range_End)
+impressions <- factor(c(textdb$Impressions, imagead$Impressions))
+
+#Normoalize sentiment score:
+textdb$sent_score <- (textdb$sent_score - min(textdb$sent_score)) / (max(textdb$sent_score) - min(textdb$sent_score))
+imagead$sent_score <- (imagead$sent_score - min(imagead$sent_score)) / (max(imagead$sent_score) - min(imagead$sent_score))
+sentiment <- c(textdb$sent_score, imagead$sent_score)
+
+type_dummy <- c(rep(0, 3959), rep(1, 13823))
+t <- c((textdb$Date_Range_End - textdb$Date_Range_Start), (imagead$Date_Range_End - imagead$Date_Range_Start))
+allads <- data.frame(cpm, type_dummy, t, sentiment, sentiment2)
+
+#using CPM 
+spend <- factor(c(textdb$Spend_USD, imagead$Spend_USD))
+stargazer(polr(impressions ~ sentiment + type_dummy + t + spend, Hess=TRUE), type = "html", 
+          title = "Ordinal Logistic Regression Result")
+
+cpm <- factor(as.numeric(spend) / as.numeric(impressions))
+stargazer(polr(cpm ~ sentiment2 + type_dummy + t, Hess=TRUE), type = "html", 
+          title = "Ordinal Logistic Regression Result")
+
+#change the formula of sentiment score: Joy - Anger - Sorrow
+imagead$sent_score2 <- as.vector(as.numeric(imagead[,"Joy"]) 
+                                 - as.numeric(imagead[,"Anger"]) - as.numeric(imagead[,"Sorrow"]))
+imagead$sent_score2 <- (imagead$sent_score2 - min(imagead$sent_score2)) /(max(imagead$sent_score2)-min(imagead$sent_score2))
+sentiment2 <- c(textdb$sent_score, imagead$sent_score2)
+
+
+stargazer(polr(cpm ~ sentiment + type_dummy + t, Hess=TRUE), polr(cpm ~ sentiment2 + type_dummy + t, Hess=TRUE), type = "html",  title = "Ordinal Logistic Regression Result")
+#robust check:
+summary(lm(as.numeric(cpm) ~ sentiment2 + type_dummy + t))
+```
+Anger？
+```{r}
+library(syuzhet)
+?get_nrc_sentiment
+stargazer(polr(imagead$cpm ~ imagead$Anger + imagead$Sorrow + imagead$Joy + imagead$Surprise + imagead$third_party, Hess=TRUE), type = "html",  title = "Ordinal Logistic Regression Result")
+#
+
+head(nrc_data, 50)
+max(nrc_data)
+#which emotion is effective for text
+textdb$t <- t[1:3959]
+textdb$cpm <- cpm[1:3959]
+stargazer(polr(textdb$cpm ~ textdb$sent_score + textdb$t, Hess=TRUE),
+          polr(textdb$cpm ~ as.numeric(nrc_data$anger) + as.numeric(nrc_data$sadness) 
+               + as.numeric(nrc_data$joy) + as.numeric(nrc_data$fear) + as.numeric(nrc_data$anticipation)
+               + as.numeric(nrc_data$disgust) + as.numeric(nrc_data$surprise) + as.numeric(nrc_data$trust)
+               + textdb$t,Hess=TRUE), type = "html", title = "Ordinal Logistic Regression Result (Text Ad)")
+#Image sentiment by text?
+nrc_data2 <- get_nrc_sentiment(imagead$Text)
+head(nrc_data2)
+imagead$Anger2 <- nrc_data2$anger
+imagead$Sorrow2 <- nrc_data2$sadness
+imagead$Joy2 <- nrc_data2$joy
+imagead$Fear <- nrc_data2$fear
+stargazer(polr(imagead$cpm ~ as.numeric(imagead$Anger2) + as.numeric(imagead$Sorrow2) 
+               + as.numeric(imagead$Joy2) + as.numeric(imagead$Fear), Hess=TRUE), type = "html", 
+          title = "Ordinal Logistic Regression Result")
+
+table(imagead$Sorrow)
+imagead[imagead$Sorrow == 2, ]
+
+#Normoalize emtions :
+textdb$Anger <- (nrc_data$anger - min(nrc_data$anger)) / (max(nrc_data$anger) - min(nrc_data$anger))
+textdb$Sorrow <- (nrc_data$sadness - min(nrc_data$sadness)) / (max(nrc_data$sadness) - min(nrc_data$sadness))
+textdb$Joy <- (nrc_data$joy - min(nrc_data$joy)) / (max(nrc_data$joy) - min(nrc_data$joy))
+textdb$Surprise <- (nrc_data$surprise - min(nrc_data$surprise)) / (max(nrc_data$surprise) - min(nrc_data$surprise))
+
+#together:
+allads$Anger <- c(textdb$Anger, (as.numeric(imagead$Anger) - min(as.numeric(imagead$Anger)))/
+                    (max(as.numeric(imagead$Anger)) - min(as.numeric(imagead$Anger))))
+allads$Sorrow <- c(textdb$Sorrow,  (as.numeric(imagead$Sorrow) - min(as.numeric(imagead$Sorrow)))/
+                    (max(as.numeric(imagead$Sorrow)) - min(as.numeric(imagead$Sorrow))))
+allads$Joy <- c(textdb$Joy,  (as.numeric(imagead$Joy) - min(as.numeric(imagead$Joy)))/
+                    (max(as.numeric(imagead$Joy)) - min(as.numeric(imagead$Joy))))
+allads$Surprise <- c(textdb$Surprise,  (as.numeric(imagead$Surprise) - min(as.numeric(imagead$Surprise)))/
+                    (max(as.numeric(imagead$Surprise)) - min(as.numeric(imagead$Surprise))))
+stargazer(polr(allads$cpm ~ allads$Anger + allads$Sorrow + allads$Joy + allads$Surprise 
+               + allads$type_dummy + allads$t + allads$sentiment2, Hess=TRUE), type = "html", 
+          title = "Ordinal Logistic Regression Result")
+
+```

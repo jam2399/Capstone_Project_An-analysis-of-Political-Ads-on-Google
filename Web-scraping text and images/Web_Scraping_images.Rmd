@@ -1,0 +1,92 @@
+---
+title: "Web Scraping to download all images"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+1. Data cleaning for image ads:
+
+```{r}
+#select date
+googlead_c$Date_Range_Start <- as.Date(googlead_c$Date_Range_Start)
+googlead_c$Date_Range_End <- as.Date(googlead_c$Date_Range_End)
+googlead_c<- googlead_c[which(googlead_c$Date_Range_Start <= as.Date("2018-11-06")),]
+googlead_c<- googlead_c[which(googlead_c$Date_Range_End <= as.Date("2018-11-06")),]
+googlead_c <- googlead_c[which(googlead_c$Date_Range_Start >= as.Date("2018-08-01")),]
+#select images
+imagead <- googlead_c[which(googlead_c$Ad_Type == "Image"),]
+```
+
+2.Web Scraping to download all images:
+```{r}
+library(rvest)
+library(xml2)
+library(RSelenium)
+###
+rsd$server$stop()
+rsd <- rsDriver(browser = "firefox", port = 4444L)
+remDr <- rsd$client
+
+####scraping image source from google
+#imagead$image_src <- seq(1:nrow(imagead))
+#imagead <- imagead[-854,]
+imagead <- imagead[-900,]
+##for images not using iframe
+
+for (i in 920:14638){
+  url <- imagead$Ad_URL[i]
+  remDr$navigate(url)
+  Sys.sleep(2)
+  link<- read_html(remDr$getPageSource()[[1]])%>% html_nodes(".visualization .ng-star-inserted")%>% html_attr("src")
+  if (length(link) == 0){
+    link <- NA
+  }
+  imagead$image_src[i] <- link
+}
+#for iframe
+imagead_na <- imagead[is.na(imagead$image_src)==TRUE,]
+#for these images using iframe:
+for (i in 3372:nrow(imagead_na)){
+  url <- imagead_na$Ad_URL[i]
+  remDr$navigate(url)
+  Sys.sleep(3)
+  webElem <- remDr$findElements("css", "iframe")
+  #exclude the unloadable pages
+  if (length(webElem)==0){
+    next
+  }
+  #Sys.sleep(2)
+  remDr$switchToFrame(webElem[[1]])
+  #test if iframe include video mistakely
+  link<- read_html(remDr$getPageSource()[[1]])%>% html_nodes("img")%>%html_attr("src")
+  if (length(link) == 0){
+    imagead_na$image_src[i] <- NA
+  }else{
+    imagead_na$image_src[i] <- link
+  }
+}
+
+#Get the new image ad dataset of ads with valid source url:
+imagead_valid <- rbind(imagead[is.na(imagead$image_src)==FALSE,], imagead_na[is.na(imagead_na$image_src)==FALSE,])
+#write.csv(imagead_valid, "imagead_valid.csv")
+for (i in 9904:nrow(imagead_valid)){
+  download.file(imagead_valid$image_src[i],
+                paste("/Users/JaxLiu/Desktop/Research/google-political-ads-creative-library/images/",i,".jpg",sep = ""), 
+                mode = "wb")
+}
+```
+
+3. Descriptive stats:
+```{r}
+#How many image ads are valid: (excluding invalid url source and vedios)
+imagead_valid <- read.csv("imagead_valid.csv", stringsAsFactors = F)
+nrow(imagead_valid)/nrow(imagead)
+#94.5% images are valid and downloaded
+```
+
+
+
+
+
