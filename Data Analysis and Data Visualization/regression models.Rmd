@@ -1,0 +1,96 @@
+---
+title: "capstone_regression"
+output: html_document
+---
+
+```{r}
+#logistic regression model with outperformed and negativity
+imagead$negativity <- as.vector(- as.numeric(imagead[,"Anger"]) +as.numeric(imagead[,"Sorrow"])-as.numeric(imagead[,"Joy"]))
+imagead$negativity2 <- as.vector(as.numeric(imagead[,"Anger"]) + as.numeric(imagead[,"Sorrow"]) -as.numeric(imagead[,"Joy"]) - as.numeric(imagead[,"Surprise"]))
+imagead$outperformed <- 0
+imagead$outperformed[as.numeric(imagead$cpm) < 7] <- 1 #cpm is a factor
+table(textdb$cpm)
+textdb$outperformed <- 0
+textdb$outperformed[as.numeric(textdb$cpm) < 4] <- 1 #cpm is a factor
+allads$outperformed <- c(imagead$outperformed, textdb$outperformed)
+#l model for image 
+stargazer(glm(outperformed ~  negativity + imagead$t + imagead$Party + imagead$thirdparty,
+                                       data = imagead, family = "binomial"), 
+          glm(outperformed ~  negativity2 + imagead$t + imagead$Party + imagead$thirdparty,
+                                       data = imagead, family = "binomial"), 
+          glm(outperformed ~ as.numeric(imagead$Anger) + as.numeric(imagead$Sorrow) 
+               + as.numeric(imagead$Joy) + as.numeric(imagead$Surprise) + 
+                imagead$t + imagead$Party,
+                                       data = imagead, family = "binomial"), 
+          type = "html", title = "Logistic Regression Result(Image Ads)")
+
+#l model for text:
+textdb$negativity <- nrc_data$negative
+stargazer(glm(outperformed ~ as.vector(nrc_data$negative - nrc_data$positive) + t + Party + thirdparty,
+                                       data = allads[1:3959,], family = "binomial"), 
+          glm(outperformed ~ as.numeric(nrc_data$anger) + as.numeric(nrc_data$sadness)+
+                as.numeric(nrc_data$joy) + as.numeric(nrc_data$fear) + 
+                             as.numeric(nrc_data$anticipation)+ as.numeric(nrc_data$disgust) + as.numeric(nrc_data$surprise) 
+                                        + as.numeric(nrc_data$trust) + t + Party + thirdparty,
+                                        data = allads[1:3959,],family = "binomial"), type = "html", title = "Logistic Regression Result(Text Ads)")
+
+stargazer(imagead, type = "html")
+```
+```{r}
+#
+
+
+stargazer(polr(textdb$cpm ~ textdb$negativity + textdb$t + thirdparty + Party, data = allads[1:3959,], Hess=TRUE),
+          polr(textdb$cpm ~ as.numeric(nrc_data$anger) + as.numeric(nrc_data$sadness) 
+               + as.numeric(nrc_data$joy) + as.numeric(nrc_data$fear) + as.numeric(nrc_data$anticipation)
+               + as.numeric(nrc_data$disgust) + as.numeric(nrc_data$surprise) + as.numeric(nrc_data$trust)+
+                 textdb$t + thirdparty + Party, data = allads[1:3959,], Hess=TRUE),
+          type = "html", title = "Ordinal Logistic Regression Result (Text Ad)",
+          align = TRUE, dep.var.labels = "eCPM", covariate.labels = c("Negativity", "Anger", "Sadness", "Joy","Fear",
+                                                                      "Anticipation", "Disgust", "Surprise", "Trust", 
+                                                                      "Time Span","Third-party","Party(Independent/Unknown)",
+                                                                      "Party(Republican)"),no.space = TRUE)
+
+stargazer(polr(imagead$cpm ~ imagead$negativity + imagead$Party + imagead$thirdparty + imagead$t, Hess=TRUE),
+          polr(imagead$cpm ~ imagead$negativity2 + imagead$Party + imagead$thirdparty + imagead$t, Hess=TRUE),
+          polr(imagead$cpm ~ as.numeric(imagead$Anger) + as.numeric(imagead$Sorrow) + as.numeric(imagead$Joy)+
+                 as.numeric(imagead$Surprise)+ imagead$Party + imagead$thirdparty + imagead$t, Hess=TRUE),
+          type = "html",  title = "Ordinal Logistic Regression Result (Image Ads)",align = TRUE, 
+          dep.var.labels = "eCPM", covariate.labels = c("Negativity", "Negativity(Equation2)", "Anger", "Sorrow","Joy",
+                                                        "Surprise", "Party(Independent/Unknown)","Party(Republican)",
+                                                        "Third-party", "Time Span"),no.space = TRUE)
+
+stargazer(polr(allads$cpm ~ allads$Anger + allads$type_dummy
+               + allads$Anger_type + allads$t +allads$thirdparty +allads$Party, Hess=TRUE),
+          type = "html", title = "Ordinal Logistic Regression Result (Both Types of Ads)",align = TRUE, 
+          dep.var.labels = "eCPM", covariate.labels = c("Anger", "Type(Image)", "Anger*Image","Time Span","Third-party",
+                                                        "Party(Independent/Unknown)","Party(Republican)"),no.space = TRUE)
+
+#exclude:polr(allads$cpm ~ allads$negativity + allads$type_dummy + (allads$negativity*allads$type_dummy) + allads$t +allads$thirdparty +allads$Party, Hess=TRUE)
+
+#robust check:OLS
+stargazer(lm(as.numeric(textdb$cpm) ~ textdb$negativity + textdb$t + thirdparty + Party, data = allads[1:3959,]),
+          lm(as.numeric(textdb$cpm) ~ as.numeric(nrc_data$anger) + as.numeric(nrc_data$sadness) 
+               + as.numeric(nrc_data$joy) + as.numeric(nrc_data$fear) + as.numeric(nrc_data$anticipation)
+               + as.numeric(nrc_data$disgust) + as.numeric(nrc_data$surprise) + as.numeric(nrc_data$trust)+
+                 textdb$t + thirdparty + Party, data = allads[1:3959,]),
+          type = "html", title = "OLS Regression Result (Text Ad)",
+          align = TRUE, dep.var.labels = "eCPM", covariate.labels = c("Negativity", "Anger", "Sadness", "Joy","Fear",
+                                                                      "Anticipation", "Disgust", "Surprise", "Trust", 
+                                                                      "Time Span","Third-party","Party(Independent/Unknown)",
+                                                                      "Party(Republican)"),
+          omit.stat = c("LL", "ser", "f"),no.space = TRUE)
+
+stargazer(lm(as.numeric(imagead$cpm) ~ imagead$sent_score2 + imagead$t +imagead$thirdparty + imagead$Party),
+          lm(as.numeric(imagead$cpm) ~ as.numeric(imagead$Anger) + as.numeric(imagead$Sorrow) 
+               + as.numeric(imagead$Joy) + as.numeric(imagead$Surprise) + imagead$t + imagead$thirdparty + imagead$Party),
+          type = "html", title = "OLS Regression Result",align = TRUE, 
+          dep.var.labels = "eCPM", covariate.labels = c("Negativity", "Anger", "Sorrow","Joy",
+                                                        "Surprise", "Time Span","Third-party","Party(Independent/Unknown)",
+                                                        "Party(Republican)"),no.space = TRUE)
+
+table(googlead_c$Ad_Type)
+
+```
+
+
